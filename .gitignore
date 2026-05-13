@@ -1,0 +1,13 @@
+# Environments
+venv/
+env/
+__pycache__/
+
+# Temporary files
+temp_uploads/
+*.pdf
+*.log
+
+# OS generated files
+.DS_Store
+EOF
