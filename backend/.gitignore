@@ -11,3 +11,5 @@ temp_uploads/
 # OS generated files
 .DS_Store
 EOF
+*.pyc
+.env
