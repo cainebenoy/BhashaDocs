@@ -7,4 +7,11 @@ def extract_text_from_pdf(file_path: str) -> str:
         extracted = page.extract_text()
         if extracted:
             text += extracted + "\n"
-    return text.strip()
+    
+    # CLEANUP: Remove extra whitespace
+    final_text = text.strip()
+    
+    if not final_text:
+        raise ValueError("The PDF contains no selectable text. It might be a scanned image.")
+        
+    return final_text

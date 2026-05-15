@@ -20,16 +20,16 @@ async def translate_document(
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
             
+        # This will now throw an error if the PDF is empty
         extracted_text = extract_text_from_pdf(file_path)
         
-        # Note: In a production app, implement a text chunking logic here to avoid token limits
         translation = translate_text(extracted_text, target_language)
         
         os.remove(file_path)
-        
         return {"filename": file.filename, "translated_text": translation}
         
+    except ValueError as ve:
+        return JSONResponse(status_code=400, content={"error": str(ve)})
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
-
 # Run the server locally: uvicorn main:app --reload

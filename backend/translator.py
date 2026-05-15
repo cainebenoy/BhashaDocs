@@ -21,18 +21,26 @@ model = AutoModelForSeq2SeqLM.from_pretrained(
 ip = IndicProcessor(inference=True)
 
 def translate_text(text: str, target_lang_code: str) -> str:
-    """
-    Translates English text to a specified Indic language using IndicTrans2.
-    target_lang_code format: 'hin_Deva', 'mal_Mlym', 'tam_Taml', etc.
-    """
-    # 1. Preprocess using their custom toolkit
+    # 1. Validation: Don't process empty strings
+    if not text or len(text.strip()) == 0:
+        return "Error: No text found to translate."
+
+    # 2. Preprocess using their custom toolkit
+    # We take only the first 1000 characters for now to avoid memory crashes
+    # until we implement a proper chunking loop.
+    input_text = text[:1000] 
+
     batch = ip.preprocess_batch(
-        [text],
+        [input_text],
         src_lang="eng_Latn",
         tgt_lang=target_lang_code,
     )
 
-    # 2. Tokenize
+    # 3. Tokenize with explicit source language
+    # This is often what causes the 'NoneType' error if omitted
+    tokenizer.src_lang = "eng_Latn"
+    tokenizer.tgt_lang = target_lang_code
+
     inputs = tokenizer(
         batch,
         truncation=True,
@@ -41,25 +49,27 @@ def translate_text(text: str, target_lang_code: str) -> str:
         return_attention_mask=True,
     ).to(DEVICE)
 
-    # 3. Generate Translation
-    with torch.no_grad():
-        generated_tokens = model.generate(
-            **inputs,
-            use_cache=True,
-            min_length=0,
-            max_length=512, # Adjust based on PDF chunk sizes
-            num_beams=5,
-            num_return_sequences=1,
+    # 4. Generate Translation
+    try:
+        with torch.no_grad():
+            generated_tokens = model.generate(
+                **inputs,
+                use_cache=True,
+                num_beams=5,
+                max_length=512,
+                num_return_sequences=1,
+            )
+
+        # 5. Decode and Postprocess
+        generated_tokens = tokenizer.batch_decode(
+            generated_tokens,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=True,
         )
 
-    # 4. Decode
-    generated_tokens = tokenizer.batch_decode(
-        generated_tokens,
-        skip_special_tokens=True,
-        clean_up_tokenization_spaces=True,
-    )
-
-    # 5. Postprocess (fixes entity formatting and script rules)
-    translations = ip.postprocess_batch(generated_tokens, lang=target_lang_code)
-    
-    return translations[0]
+        translations = ip.postprocess_batch(generated_tokens, lang=target_lang_code)
+        return translations[0]
+        
+    except Exception as e:
+        print(f"Model Error: {e}")
+        return f"Translation failed: {str(e)}"
