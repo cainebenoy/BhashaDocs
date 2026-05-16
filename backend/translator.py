@@ -4,6 +4,8 @@ from IndicTransToolkit.processor import IndicProcessor
 import re
 import json
 
+torch.set_num_threads(2)
+
 # Auto-detect hardware
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Loading IndicTrans2 on {DEVICE.upper()}...")
@@ -66,8 +68,8 @@ def translate_stream(text: str, target_lang_code: str):
             with torch.no_grad():
                 generated_tokens = model.generate(
                     **inputs,
-                    use_cache=False, # Keeps it stable for older transformers versions
-                    num_beams=4,     # Slightly lowered for faster CPU speed
+                    use_cache=True,  # <--- CRITICAL FIX: Remembers past math!
+                    num_beams=1,     # <--- CRITICAL FIX: Greedy decoding (4x faster)
                     max_length=256,
                     num_return_sequences=1,
                 )

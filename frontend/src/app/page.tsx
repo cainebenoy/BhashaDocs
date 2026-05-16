@@ -137,7 +137,7 @@ export default function Home() {
     formData.append("file", file); formData.append("target_language", targetLang);
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/api/translate-doc", { method: "POST", body: formData });
+      const response = await fetch("https://cainebenoy-bhashadocs-api.hf.space/api/translate-doc", { method: "POST", body: formData });
       if (!response.ok) throw new Error("Translation failed to start.");
 
       const reader = response.body?.getReader();
