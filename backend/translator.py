@@ -2,6 +2,7 @@ import torch
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 from IndicTransToolkit.processor import IndicProcessor
 import re
+import json
 
 # Auto-detect hardware
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -21,27 +22,21 @@ model = AutoModelForSeq2SeqLM.from_pretrained(
 # Initialize the custom AI4Bharat Processor
 ip = IndicProcessor(inference=True)
 
-def chunk_text(text: str, max_chars: int = 300) -> list:
-    """Splits long text into safe, model-friendly chunks without breaking sentences."""
-    # Split by periods, question marks, or newlines
-    sentences = re.split(r'(?<=[.!?\n]) +|\n+', text)
-    chunks = []
-    current_chunk = ""
-    
-    for sentence in sentences:
-        if len(current_chunk) + len(sentence) < max_chars:
-            current_chunk += sentence + " "
-        else:
-            if current_chunk: chunks.append(current_chunk.strip())
-            current_chunk = sentence + " "
-    if current_chunk: chunks.append(current_chunk.strip())
-    
-    return chunks
+
+# --- (Keep your existing model loading and ip = IndicProcessor setup up here) ---
+
+def chunk_text(text: str) -> list:
+    """Splits text strictly by sentence boundaries for the fastest safe streaming."""
+    # Split by periods, question marks, or exclamation points followed by a space
+    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+    # Filter out empty strings and return
+    return [s.strip() for s in sentences if len(s.strip()) > 0]
 
 def translate_stream(text: str, target_lang_code: str):
-    """Generator that yields translated chunks one by one."""
+    """Generator that yields translated chunks one by one as NDJSON."""
     if not text or len(text.strip()) == 0:
-        yield "Error: No text found."
+        error_obj = {"original": "", "translated": "Error: No text found."}
+        yield json.dumps(error_obj) + "\n"
         return
 
     chunks = chunk_text(text)
@@ -51,36 +46,55 @@ def translate_stream(text: str, target_lang_code: str):
         if not chunk.strip(): continue
         
         try:
+            # 1. Preprocess
             batch = ip.preprocess_batch([chunk], src_lang="eng_Latn", tgt_lang=target_lang_code)
             
+            # 2. Setup Tokenizer Langs
             tokenizer.src_lang = "eng_Latn"
             tokenizer.tgt_lang = target_lang_code
             
+            # 3. Tokenize
             inputs = tokenizer(
-                batch, truncation=True, padding="longest", 
-                return_tensors="pt", add_special_tokens=True
+                batch, 
+                truncation=True, 
+                padding="longest", 
+                return_tensors="pt", 
+                add_special_tokens=True
             ).to(DEVICE)
 
+            # 4. Generate
             with torch.no_grad():
                 generated_tokens = model.generate(
                     **inputs,
-                    use_cache=False, # Keeps it stable
+                    use_cache=False, # Keeps it stable for older transformers versions
                     num_beams=4,     # Slightly lowered for faster CPU speed
                     max_length=256,
                     num_return_sequences=1,
                 )
 
+            # 5. Decode
             with tokenizer.as_target_tokenizer():
                 decoded = tokenizer.batch_decode(
-                    generated_tokens, skip_special_tokens=True, clean_up_tokenization_spaces=True
+                    generated_tokens, 
+                    skip_special_tokens=True, 
+                    clean_up_tokenization_spaces=True
                 )
 
+            # 6. Postprocess
             translation = ip.postprocess_batch(decoded, lang=target_lang_code)[0]
-            
             print(f"Chunk {i+1}/{len(chunks)} translated.")
-            # Yield the chunk plus a space so it formats correctly on the frontend
-            yield translation + " " 
+            
+            # 7. Yield NDJSON Object
+            result_obj = {
+                "original": chunk.strip(),
+                "translated": translation.strip()
+            }
+            yield json.dumps(result_obj) + "\n"
 
         except Exception as e:
             print(f"Error on chunk {i}: {e}")
-            yield f"[Translation error on a chunk] "
+            error_obj = {
+                "original": chunk.strip(), 
+                "translated": f"[Translation error: {str(e)}]"
+            }
+            yield json.dumps(error_obj) + "\n"

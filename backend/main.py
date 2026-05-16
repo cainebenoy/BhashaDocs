@@ -35,7 +35,7 @@ async def translate_document(
         # Return a stream instead of a static JSON response
         return StreamingResponse(
             translate_stream(extracted_text, target_language), 
-            media_type="text/plain"
+            media_type="application/x-ndjson"
         )
         
     except ValueError as ve:
