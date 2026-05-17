@@ -73,11 +73,10 @@ async def translate_document(
         raise HTTPException(status_code=400, detail="Unsupported language. Check supported language codes.")
     
     try:
-        # 3. Read and Validate File Size
+        # 3. Read file bytes (no hard size rejection - translate full PDF)
         file_bytes = await file.read()
-        if len(file_bytes) > MAX_FILE_SIZE:
-            raise HTTPException(status_code=413, detail=f"File too large. Maximum size: 50MB.")
-        
+        # Note: MAX_FILE_SIZE is retained as an env hint but not enforced here
+        # to allow translating full PDF uploads per product requirement.
         # 4. Extract Text from PDF
         text = extract_text_from_pdf(io.BytesIO(file_bytes))
         

@@ -34,6 +34,36 @@ def chunk_text(text: str) -> list:
     # Filter out empty strings and return
     return [s.strip() for s in sentences if len(s.strip()) > 0]
 
+
+def split_long_sentence(s: str, max_chars: int = 2000) -> list:
+    """Split very long sentences into smaller pieces at natural punctuation or by char windows.
+    This avoids truncation during tokenization/generation while preserving order.
+    """
+    if len(s) <= max_chars:
+        return [s]
+
+    # try splitting at common clause delimiters first
+    parts = re.split(r'(?<=,|;|:)\s+', s)
+    out = []
+    cur = ""
+    for p in parts:
+        if not cur:
+            cur = p
+        elif len(cur) + 1 + len(p) <= max_chars:
+            cur = cur + " " + p
+        else:
+            out.append(cur)
+            if len(p) > max_chars:
+                # fallback: hard-chunk the long part
+                for i in range(0, len(p), max_chars):
+                    out.append(p[i:i+max_chars])
+                cur = ""
+            else:
+                cur = p
+    if cur:
+        out.append(cur)
+    return out
+
 def translate_stream(text: str, target_lang_code: str):
     """Generator that yields translated chunks one by one as NDJSON."""
     if not text or len(text.strip()) == 0:
@@ -42,9 +72,14 @@ def translate_stream(text: str, target_lang_code: str):
         return
 
     chunks = chunk_text(text)
-    print(f"--- Translating {len(chunks)} chunks to {target_lang_code} ---")
+    # Expand very long sentences into manageable pieces to avoid generation truncation
+    expanded_chunks = []
+    for s in chunks:
+        expanded_chunks.extend(split_long_sentence(s, max_chars=2000))
 
-    for i, chunk in enumerate(chunks):
+    print(f"--- Translating {len(expanded_chunks)} chunks to {target_lang_code} (expanded from {len(chunks)}) ---")
+
+    for i, chunk in enumerate(expanded_chunks):
         if not chunk.strip(): continue
         
         try:
@@ -70,7 +105,7 @@ def translate_stream(text: str, target_lang_code: str):
                     **inputs,
                     use_cache=False,
                     num_beams=1,
-                    max_length=256,
+                    max_length=1024,
                     num_return_sequences=1,
                 )
 

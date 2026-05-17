@@ -138,14 +138,12 @@ export default function Home() {
 
     // API URL from environment or fallback
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://cainebenoy-bhashadocs-api.hf.space";
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 120000); // 2-minute timeout
+    // No AbortController timeout: translate full PDFs without client-side time limit
 
     try {
       const response = await fetch(`${apiUrl}/api/translate-doc`, { 
         method: "POST", 
         body: formData,
-        signal: controller.signal
       });
       
       if (!response.ok) {
@@ -183,7 +181,7 @@ export default function Home() {
         setError(err.message || "An unexpected error occurred.");
       }
     } finally { 
-      clearTimeout(timeoutId);
+      // no timeout to clear
       setIsLoading(false); 
     }
   };
