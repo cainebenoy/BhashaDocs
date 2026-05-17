@@ -1,6 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+import json
 try:
     from slowapi import Limiter, _rate_limit_exceeded_handler
     from slowapi.errors import RateLimitExceeded
@@ -73,6 +74,14 @@ async def root():
     return {"status": "BhashaDocs Engine is Running Core Pipelines Online"}
 
 
+async def safe_translate_stream(text_list, target_language):
+    try:
+        for chunk in translate_stream(text_list, target_language):
+            yield chunk
+    except Exception as e:
+        logger.error(f"💥 CRITICAL EXCEPTION inside translate_stream: {str(e)}")
+        yield json.dumps({"error": f"Internal ML Engine Crash: {str(e)}"})
+
 @app.post("/api/translate-text")
 async def translate_text(
     text: str = Form(...),
@@ -82,9 +91,8 @@ async def translate_text(
     if not text.strip():
         raise HTTPException(status_code=400, detail="Text string cannot be empty.")
         
-    # Wrap the single text string into a list chunk for the translator engine
     return StreamingResponse(
-        translate_stream([text], target_language),
+        safe_translate_stream([text], target_language),
         media_type="text/event-stream",
         headers={
             "X-Accel-Buffering": "no",
