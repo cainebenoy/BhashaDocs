@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from utils import extract_text_from_pdf
 from translator import translate_stream
 import logging
+import io  # <--- ADD THIS IMPORT
 
 # Setup logging to see output inside Hugging Face container logs
 logging.basicConfig(level=logging.INFO)
@@ -38,7 +39,7 @@ async def translate_document(
     try:
         # 3. Read File and Extract Sentences/Chunks
         file_bytes = await file.read()
-        text_chunks = extract_text_from_pdf(file_bytes)
+        text_chunks = extract_text_from_pdf(io.BytesIO(file_bytes)) # <--- WRAP IT HERE
         
         if not text_chunks:
             raise HTTPException(status_code=400, detail="No readable text found inside the PDF.")
