@@ -2,6 +2,11 @@
 
 > **Translate PDFs instantly to 22+ Indian languages with AI-powered streaming translation**
 
+## 📚 Documentation
+
+- [Deployment Guide](DEPLOYMENT.md)
+- [Development Guide](DEVELOPMENT.md)
+
 ## 🚀 Live Demo
 
 **Frontend:** [https://bhasha-docs.vercel.app/](https://bhasha-docs.vercel.app/)  
@@ -142,6 +147,11 @@ docker build -t bhasha-docs .
 ### POST `/api/translate-doc`
 Translate a PDF document to a target Indian language with real-time streaming.
 
+Rate limited to 5 requests per minute per client IP.
+
+### GET `/health`
+Returns a small readiness check for uptime monitors and deployment probes.
+
 **Request:**
 ```bash
 curl -X POST http://localhost:8000/api/translate-doc \
@@ -245,6 +255,8 @@ typescript        - Type safety
 
 - **CORS Validation**: Configured for production Vercel domain
 - **File Type Validation**: Only PDF files accepted
+- **Rate Limiting**: Translation endpoint is capped at 5 requests per minute per client IP
+- **Health Check**: Lightweight readiness endpoint for monitoring
 - **Error Handling**: Graceful error messages without exposing internals
 - **Input Sanitization**: PDF content is validated before processing
 
