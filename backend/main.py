@@ -1,9 +1,23 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
+try:
+    from slowapi import Limiter, _rate_limit_exceeded_handler
+    from slowapi.errors import RateLimitExceeded
+    from slowapi.util import get_remote_address
+    RATE_LIMIT_ENABLED = True
+except Exception:
+    # If slowapi isn't installed in the runtime (some deployment environments),
+    # fall back to a no-op limiter so the app can start without rate limiting.
+    Limiter = None
+    RateLimitExceeded = Exception
+    RATE_LIMIT_ENABLED = False
+
+    def get_remote_address(request: Request):
+        try:
+            return request.client.host
+        except Exception:
+            return "unknown"
 from utils import extract_text_from_pdf
 from translator import translate_stream
 import logging
@@ -20,9 +34,20 @@ logging.basicConfig(level=getattr(logging, log_level, logging.INFO))
 logger = logging.getLogger("BhashaDocs")
 
 app = FastAPI(title="BhashaDocs API")
-limiter = Limiter(key_func=get_remote_address)
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+if RATE_LIMIT_ENABLED:
+    limiter = Limiter(key_func=get_remote_address)
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+else:
+    # Define a no-op limiter with a compatible `limit` decorator
+    class _NoopLimiter:
+        def limit(self, _expr: str):
+            def _decorator(func):
+                return func
+            return _decorator
+    limiter = _NoopLimiter()
+    logger = logging.getLogger("BhashaDocs")
+    logger.warning("slowapi not available; rate limiting disabled.")
 
 # Configuration
 MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", str(50 * 1024 * 1024)))
