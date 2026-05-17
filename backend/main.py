@@ -73,6 +73,27 @@ async def root():
     return {"status": "BhashaDocs Engine is Running Core Pipelines Online"}
 
 
+@app.post("/api/translate-text")
+async def translate_text(
+    text: str = Form(...),
+    target_language: str = Form(...)
+):
+    logger.info(f"Received raw text string for translation to {target_language}")
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="Text string cannot be empty.")
+        
+    # Wrap the single text string into a list chunk for the translator engine
+    return StreamingResponse(
+        translate_stream([text], target_language),
+        media_type="text/event-stream",
+        headers={
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+        }
+    )
+
+
 @app.get("/health")
 async def health_check():
     return {"status": "ok", "model": "IndicTrans2", "ready": True}
