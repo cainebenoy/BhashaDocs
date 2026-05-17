@@ -136,9 +136,22 @@ export default function Home() {
     const formData = new FormData();
     formData.append("file", file); formData.append("target_language", targetLang);
 
+    // API URL from environment or fallback
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://cainebenoy-bhashadocs-api.hf.space";
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120000); // 2-minute timeout
+
     try {
-      const response = await fetch("https://cainebenoy-bhashadocs-api.hf.space/api/translate-doc", { method: "POST", body: formData });
-      if (!response.ok) throw new Error("Translation failed to start.");
+      const response = await fetch(`${apiUrl}/api/translate-doc`, { 
+        method: "POST", 
+        body: formData,
+        signal: controller.signal
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(response.status === 413 ? "File too large (max 50MB)" : "Translation failed. Please try again.");
+      }
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
@@ -152,11 +165,27 @@ export default function Home() {
           const lines = buffer.split('\n');
           buffer = lines.pop() || "";
           for (const line of lines) {
-            if (line.trim()) setChunks((prev) => [...prev, JSON.parse(line)]);
+            if (line.trim()) {
+              try {
+                const parsed = JSON.parse(line);
+                setChunks((prev) => [...prev, parsed]);
+              } catch (parseErr) {
+                console.error("Failed to parse JSON chunk:", line);
+              }
+            }
           }
         }
       }
-    } catch (err: any) { setError(err.message); } finally { setIsLoading(false); }
+    } catch (err: any) { 
+      if (err.name === "AbortError") {
+        setError("Translation timeout. Please try a smaller file.");
+      } else {
+        setError(err.message || "An unexpected error occurred.");
+      }
+    } finally { 
+      clearTimeout(timeoutId);
+      setIsLoading(false); 
+    }
   };
 
   return (
@@ -289,13 +318,18 @@ export default function Home() {
                     {isLoading && (
                        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className={`text-xs font-medium ${currentTheme.text} flex items-center gap-2`}>
                           Processing stream
-                          <span className="flex h-1.5 w-1.5 relative">
-                            <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${currentTheme.glow} opacity-75`}></span>
-                            <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${currentTheme.glow}`}></span>
-                          </span>
+                            <span className="flex h-1.5 w-1.5 relative">
+                              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${currentTheme.glow} opacity-75`}></span>
+                              <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${currentTheme.glow}`}></span>
+                            </span>
                         </motion.div>
                     )}
                   </div>
+                    {isLoading && (
+                      <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-xs text-zinc-500 px-3 py-2 bg-amber-50 border border-amber-100 rounded-lg">
+                        💡 <span className="font-medium">Free cloud infrastructure:</span> Initial translation may take 30–60 seconds. Please wait...
+                      </motion.p>
+                    )}
                   {chunks.length > 0 && !isLoading && (
                     <div className="flex gap-2">
                       <button onClick={() => handleExport('copy')} className="p-2 hover:bg-zinc-100 text-zinc-400 hover:text-zinc-700 rounded-lg transition-colors" title="Copy"><Copy className="w-4 h-4" /></button>
