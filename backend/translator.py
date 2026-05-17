@@ -68,8 +68,8 @@ def translate_stream(text: str, target_lang_code: str):
             with torch.no_grad():
                 generated_tokens = model.generate(
                     **inputs,
-                    use_cache=True,  # <--- CRITICAL FIX: Remembers past math!
-                    num_beams=1,     # <--- CRITICAL FIX: Greedy decoding (4x faster)
+                    use_cache=False,
+                    num_beams=1,
                     max_length=256,
                     num_return_sequences=1,
                 )
