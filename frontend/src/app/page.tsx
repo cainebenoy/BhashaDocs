@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { UploadCloud, FileText, ArrowRight, Languages, Sparkles, X, ChevronDown, Check, Copy, Download } from "lucide-react";
+import { UploadCloud, FileText, ArrowRight, Languages, Sparkles, X, ChevronDown, Check, Copy, Download, MessageCircle, Send } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 // 1. The Theme Dictionary (Explicitly defining classes for Tailwind v4)
@@ -76,6 +76,7 @@ const ONBOARDING_STEPS: Record<string, string[]> = {
 };
 
 type TranslationChunk = { original: string; translated: string; };
+type ChatMessage = { sender: "user" | "bot"; text: string };
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
@@ -87,19 +88,29 @@ export default function Home() {
   const [chunks, setChunks] = useState<TranslationChunk[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [chatInput, setChatInput] = useState("");
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [isChatLoading, setIsChatLoading] = useState(false);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resultEndRef = useRef<HTMLDivElement>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
   const langMenuRef = useRef<HTMLDivElement>(null);
   
   const selectedLang = LANGUAGES.find(l => l.code === targetLang) || LANGUAGES[0];
   const steps = ONBOARDING_STEPS[targetLang] || ONBOARDING_STEPS["eng"];
 
   const currentTheme = THEME_MAP[selectedLang.color];
+  const documentContext = chunks.map((chunk) => chunk.original).join("\n\n").trim();
 
   useEffect(() => {
     if (resultEndRef.current) resultEndRef.current.scrollIntoView({ behavior: "smooth" });
   }, [chunks]);
+
+  useEffect(() => {
+    if (chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -129,9 +140,32 @@ export default function Home() {
     }
   };
 
+  const getErrorMessage = (err: unknown, fallback: string) => {
+    if (err instanceof Error && err.message) return err.message;
+    return fallback;
+  };
+
+  const formatApiError = (payload: unknown, fallback: string) => {
+    if (typeof payload === "string" && payload.trim()) return payload;
+    if (payload && typeof payload === "object") {
+      const maybeDetail = (payload as { detail?: unknown }).detail;
+      if (typeof maybeDetail === "string" && maybeDetail.trim()) return maybeDetail;
+      if (maybeDetail && typeof maybeDetail === "object") {
+        const detailObj = maybeDetail as { error?: string; retry_after_seconds?: number };
+        if (typeof detailObj.error === "string" && detailObj.error.trim()) {
+          if (typeof detailObj.retry_after_seconds === "number") {
+            return `${detailObj.error} Retry after ${detailObj.retry_after_seconds}s.`;
+          }
+          return detailObj.error;
+        }
+      }
+    }
+    return fallback;
+  };
+
   const handleTranslate = async () => {
     if (!file) return;
-    setIsLoading(true); setError(null); setChunks([]);
+    setIsLoading(true); setError(null); setChunks([]); setMessages([]); setChatInput("");
 
     const formData = new FormData();
     formData.append("file", file); formData.append("target_language", targetLang);
@@ -147,7 +181,6 @@ export default function Home() {
       });
       
       if (!response.ok) {
-        const errorText = await response.text();
         throw new Error(response.status === 413 ? "File too large (max 50MB)" : "Translation failed. Please try again.");
       }
 
@@ -167,22 +200,167 @@ export default function Home() {
               try {
                 const parsed = JSON.parse(line);
                 setChunks((prev) => [...prev, parsed]);
-              } catch (parseErr) {
+              } catch {
                 console.error("Failed to parse JSON chunk:", line);
               }
             }
           }
         }
       }
-    } catch (err: any) { 
-      if (err.name === "AbortError") {
+    } catch (err: unknown) { 
+      if (err instanceof Error && err.name === "AbortError") {
         setError("Translation timeout. Please try a smaller file.");
       } else {
-        setError(err.message || "An unexpected error occurred.");
+        setError(getErrorMessage(err, "An unexpected error occurred."));
       }
     } finally { 
       // no timeout to clear
       setIsLoading(false); 
+    }
+  };
+
+  const extractTextFromEvent = (eventBlock: string): string => {
+    const lines = eventBlock.split("\n");
+    let aggregate = "";
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+
+      const payload = line.replace(/^data:\s*/i, "").trim();
+      if (!payload) continue;
+
+      try {
+        const parsed = JSON.parse(payload);
+        if (typeof parsed === "string") {
+          aggregate += parsed;
+        } else if (parsed && typeof parsed === "object") {
+          const textValue = parsed.translated ?? parsed.text ?? parsed.message ?? "";
+          if (typeof textValue === "string") aggregate += textValue;
+        }
+      } catch {
+        aggregate += payload;
+      }
+    }
+
+    return aggregate;
+  };
+
+  const appendToLastBotMessage = (incoming: string) => {
+    if (!incoming) return;
+    setMessages((prev) => {
+      if (prev.length === 0) return prev;
+      const updated = [...prev];
+      const lastIndex = updated.length - 1;
+      if (updated[lastIndex].sender === "bot") {
+        updated[lastIndex] = { ...updated[lastIndex], text: updated[lastIndex].text + incoming };
+      }
+      return updated;
+    });
+  };
+
+  const handleSendMessage = async () => {
+    const userMessage = chatInput.trim();
+    if (!userMessage) return;
+    if (!documentContext) {
+      setError("Please complete translation first so chat can use document context.");
+      return;
+    }
+
+    setError(null);
+    setChatInput("");
+    setMessages((prev) => [...prev, { sender: "user", text: userMessage }, { sender: "bot", text: "" }]);
+    setIsChatLoading(true);
+
+    const formData = new FormData();
+    formData.append("question", userMessage);
+    formData.append("document_context", documentContext);
+    formData.append("source_lang", targetLang);
+
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://cainebenoy-bhashadocs-api.hf.space";
+    const chatTimeoutMs = Number(process.env.NEXT_PUBLIC_CHAT_TIMEOUT_MS || 45000);
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), chatTimeoutMs);
+
+    try {
+      const response = await fetch(`${apiUrl}/api/chat`, {
+        method: "POST",
+        body: formData,
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        let message = "Chat pipeline failed. Please try again.";
+        try {
+          const errorPayload = await response.json();
+          message = formatApiError(errorPayload, message);
+        } catch {
+          // Ignore JSON parse errors and keep fallback message.
+        }
+        throw new Error(message);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("No stream returned from chat endpoint.");
+
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+      let receivedAnyChunk = false;
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split("\n\n");
+        buffer = events.pop() || "";
+
+        for (const eventBlock of events) {
+          const cleanText = extractTextFromEvent(eventBlock);
+          if (cleanText) receivedAnyChunk = true;
+          appendToLastBotMessage(cleanText);
+        }
+      }
+
+      if (buffer.trim()) {
+        const finalChunk = extractTextFromEvent(buffer);
+        if (finalChunk) receivedAnyChunk = true;
+        appendToLastBotMessage(finalChunk);
+      }
+
+      if (!receivedAnyChunk) {
+        setMessages((prev) => {
+          const updated = [...prev];
+          const lastIndex = updated.length - 1;
+          if (lastIndex >= 0 && updated[lastIndex].sender === "bot") {
+            updated[lastIndex] = {
+              sender: "bot",
+              text: "I did not receive a response from the chat stream. Please try again.",
+            };
+          }
+          return updated;
+        });
+      }
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error && err.name === "AbortError"
+          ? "Chat request timed out. Please try again."
+          : getErrorMessage(err, "Pipeline breakdown.");
+      setError(message);
+      setMessages((prev) => {
+        const updated = [...prev];
+        const lastIndex = updated.length - 1;
+        if (lastIndex >= 0 && updated[lastIndex].sender === "bot" && !updated[lastIndex].text) {
+          updated[lastIndex] = {
+            sender: "bot",
+            text: message || "Sorry, I could not process that request right now.",
+          };
+        }
+        return updated;
+      });
+    } finally {
+      window.clearTimeout(timeoutId);
+      setIsChatLoading(false);
     }
   };
 
@@ -287,7 +465,7 @@ export default function Home() {
                   onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }} onDragLeave={() => setIsDragging(false)} onDrop={handleDrop} onClick={() => fileInputRef.current?.click()}
                   className={`relative overflow-hidden border-2 border-dashed rounded-[1.5rem] p-12 text-center cursor-pointer transition-all duration-300 ${isDragging ? "border-zinc-400 bg-zinc-100 scale-[1.02]" : "border-zinc-200 hover:border-zinc-300 hover:bg-zinc-50/50"}`}
                 >
-                  <input type="file" ref={fileInputRef} className="hidden" accept="application/pdf" onChange={(e) => e.target.files && setFile(e.target.files[0])} />
+                  <input type="file" aria-label="Upload PDF" ref={fileInputRef} className="hidden" accept="application/pdf" onChange={(e) => e.target.files && setFile(e.target.files[0])} />
                   <UploadCloud className={`w-10 h-10 mx-auto mb-4 transition-colors duration-300 ${isDragging ? "text-zinc-600" : "text-zinc-300"}`} />
                   <p className="text-sm font-semibold text-zinc-700">Drag & drop your PDF</p>
                 </motion.div>
@@ -300,7 +478,7 @@ export default function Home() {
                       <p className="text-xs text-zinc-500 font-medium mt-0.5">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
                     </div>
                   </div>
-                  <button onClick={() => { setFile(null); setChunks([]); }} className="p-2 text-zinc-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"><X className="w-5 h-5" /></button>
+                  <button title="Remove file" aria-label="Remove file" onClick={() => { setFile(null); setChunks([]); setMessages([]); setChatInput(""); setIsChatOpen(false); }} className="p-2 text-zinc-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"><X className="w-5 h-5" /></button>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -323,6 +501,15 @@ export default function Home() {
                         </motion.div>
                     )}
                   </div>
+                  {chunks.length > 0 && !isLoading && (
+                    <button
+                      onClick={() => setIsChatOpen(true)}
+                      className="px-3 py-2 text-xs font-semibold rounded-lg bg-zinc-900 text-white hover:bg-zinc-800 transition-colors flex items-center gap-2"
+                    >
+                      <MessageCircle className="w-3.5 h-3.5" />
+                      Chat Mode
+                    </button>
+                  )}
                     {isLoading && (
                       <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-xs text-zinc-500 px-3 py-2 bg-amber-50 border border-amber-100 rounded-lg">
                         💡 <span className="font-medium">Free cloud infrastructure:</span> Initial translation may take 30–60 seconds. Please wait...
@@ -377,6 +564,87 @@ export default function Home() {
 
         </motion.div>
       </motion.div>
+
+      <AnimatePresence>
+        {isChatOpen && (
+          <motion.aside
+            initial={{ x: 420, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: 420, opacity: 0 }}
+            transition={{ type: "spring", stiffness: 300, damping: 32 }}
+            className="fixed top-4 right-4 bottom-4 left-4 md:left-auto md:w-[420px] bg-white/95 backdrop-blur-xl border border-zinc-200 rounded-3xl shadow-2xl z-[60] flex flex-col"
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-100">
+              <div>
+                <p className="text-sm font-semibold text-zinc-900">Document Chat</p>
+                <p className="text-xs text-zinc-500">Ask in your selected language</p>
+              </div>
+              <button
+                onClick={() => setIsChatOpen(false)}
+                className="p-2 rounded-lg text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 transition-colors"
+                aria-label="Close chat"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {messages.length === 0 && (
+                <div className="p-4 rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 text-sm text-zinc-500">
+                  Start with a question about the uploaded document.
+                </div>
+              )}
+
+              {messages.map((message, index) => (
+                <div
+                  key={index}
+                  className={`max-w-[90%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap ${
+                    message.sender === "user"
+                      ? "ml-auto bg-zinc-900 text-white"
+                      : "mr-auto bg-zinc-100 text-zinc-800"
+                  }`}
+                >
+                  {message.text || (isChatLoading && message.sender === "bot" ? "Thinking..." : "")}
+                </div>
+              ))}
+              <div ref={chatEndRef} />
+            </div>
+
+            <div className="p-4 border-t border-zinc-100">
+              <div className="flex items-end gap-2">
+                <textarea
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      if (!isChatLoading) handleSendMessage();
+                    }
+                  }}
+                  placeholder="Ask anything from the document..."
+                  className="flex-1 resize-none min-h-[48px] max-h-[120px] rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-200"
+                  disabled={isChatLoading || !documentContext}
+                />
+                <button
+                  title="Send message"
+                  aria-label="Send message"
+                  onClick={handleSendMessage}
+                  disabled={isChatLoading || !chatInput.trim() || !documentContext}
+                  className="h-12 w-12 rounded-xl bg-zinc-900 text-white disabled:opacity-50 flex items-center justify-center hover:bg-zinc-800 transition-colors"
+                >
+                  <Send className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          </motion.aside>
+        )}
+      </AnimatePresence>
+
+      {error && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[70] px-4 py-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl shadow-sm">
+          {error}
+        </div>
+      )}
     </main>
   );
 }

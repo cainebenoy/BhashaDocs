@@ -64,8 +64,17 @@ def split_long_sentence(s: str, max_chars: int = 2000) -> list:
         out.append(cur)
     return out
 
+def _normalize_text_input(text):
+    if isinstance(text, list):
+        return "\n".join(str(item).strip() for item in text if str(item).strip())
+    if text is None:
+        return ""
+    return str(text)
+
+
 def translate_stream(text: str, target_lang_code: str):
     """Generator that yields translated chunks one by one as NDJSON."""
+    text = _normalize_text_input(text)
     if not text or len(text.strip()) == 0:
         error_obj = {"original": "", "translated": "Error: No text found."}
         yield json.dumps(error_obj) + "\n"

@@ -9,3 +9,5 @@ sentencepiece
 sacremoses
 IndicTransToolkit
 PyPDF2
+requests
+groq
